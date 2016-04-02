@@ -4,7 +4,7 @@
 
 void init()
 {
-	char *dir = "disk";
+	char *dir = "disk\\c";
 	_mkdir(dir);
 	for (int i = 0; i < TotalBlockCnt; i++)
 	{
@@ -22,7 +22,7 @@ int main()
 	init();//初始化磁盘
 	FileSystem *fs = new FileSystem;
 	char inputBuf[MaxCharLen];
-
+	fs->save();
 	while (true)
 	{
 		string command;
@@ -41,14 +41,18 @@ int main()
 			fs->op_rmdir();
 		else if (command == "del")
 			fs->op_delfile();
+		/*else if (command == "open")
+			fs->op_open();
+		else if (command == "close")
+			fs->op_close();*/
 		else if (command == "exit")
 			break;
 		else
 			fgets(inputBuf, MaxCharLen, stdin);	//清空输入行
+		
+		fs->save();
 		printf("\n");
 	}
-
-	fs->save();
 	delete fs;
 	return 0;
 }

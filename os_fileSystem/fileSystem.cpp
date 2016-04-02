@@ -1,11 +1,17 @@
 #include "fileSystem.h"
 //TODO：检验文件名是否合格
+//TODO:如何保证有些文件不能被删除
+//TODO：修改变量名 eg:lastmodtime
+//TODO:处理disk\\D盘
+//TODO：实验报告体现自举难题
+//TODO:父文件的更新时间
 
 FileSystem::FileSystem()
 {
 	fileIndex.indexCnt = 0;
 	curLevel = 0;
 	curIndex = 0;
+	tmpFileCnt = 0;
 
 	if (load() == 0)	//若加载失败，则重新初始化
 	{
@@ -17,8 +23,9 @@ FileSystem::FileSystem()
 
 		//TODO:上帝视角嫌疑
 		curIndex = 1;
+		createFile(writable, "catalog.ini", file, 0);
 		createFile(writable, "Users", dir, 0);
-		curIndex = 3;
+		curIndex = 4;
 		createFile(writable, "susliks", dir, 0);
 		curIndex = 0;
 		setCurDirReadOnly();	//把root文件夹设置为只读
@@ -71,6 +78,7 @@ int FileSystem::updateBitmap(int mode, int blockId)
 		int offset = blockId % 8;
 		bitmap[loc] &= ~(1 << offset);
 	}
+	return 1;
 }
 
 string FileSystem::getCurPath()
@@ -183,7 +191,8 @@ bool FileSystem::fileNameIsLegal(string fileName)
 	{
 		char tmp = fileName[i];
 		if (!(('0' <= tmp && tmp <= '9') || ('a' <= tmp && tmp <= 'z')
-			|| ('A' <= tmp && tmp <= 'Z') || tmp == '_' || tmp == ':'))
+			|| ('A' <= tmp && tmp <= 'Z') || tmp == '_' || tmp == ':'
+			|| tmp == '.'))
 			flag = false;
 	}
 	return flag;
@@ -192,7 +201,6 @@ bool FileSystem::fileNameIsLegal(string fileName)
 int FileSystem::createFile(FileAccess acc, string fileName, FileType type, int filesize)
 {
 	//应该先创建文件 再添加到目录中 以应对创建失败的情况
-	int blockCnt;  //用来存放文件所需的文件块数目
 	int block[50];  //用来存放分配的文件块列表
 	FCB* filecb;
 	memset(block, 0, sizeof(block));  //初始化为0
@@ -292,6 +300,7 @@ int FileSystem::addIndex(string fileName, FileType type, FCB* fcb)
 		fileIndex.index[fileIndex.indexCnt].parentId = -1;
 	fileIndex.index[fileIndex.indexCnt].effect = 1;
 	fileIndex.index[fileIndex.indexCnt].fileType = type;
+	fileIndex.index[fileIndex.indexCnt].tmpFileId = -1;
 	fileIndex.index[fileIndex.indexCnt].fcb = fcb;
 	//memset(fileIndex.index[fileIndex.indexCnt].child, 0, sizeof(fileIndex.index[fileIndex.indexCnt].child));
 	//fileIndex.index[fileIndex.indexCnt].childnum = 0;
@@ -301,6 +310,7 @@ int FileSystem::addIndex(string fileName, FileType type, FCB* fcb)
 		//fileIndex.index[curIndex].child[fileIndex.index[curIndex].childnum++] = fileIndex.indexCnt;
 		fileIndex.index[curIndex].child.push_back(fileIndex.indexCnt);
 	fileIndex.indexCnt++;
+	return 1;
 }
 
 vector<string> split(string str, string pattern)	//	把string以特定分隔符作切分
@@ -354,68 +364,18 @@ int FileSystem::op_cd()
 	}
 	string tmpCdPath = inputBuf;
 
-	/*
-	int tmp_loc = 0;
-	while (tmpCdPath[tmp_loc] == ' ' || tmpCdPath[tmp_loc] == '\t')	//忽略掉cd后面的whitespace
-		tmp_loc++;
-	tmpCdPath = tmpCdPath.substr(tmp_loc, tmpCdPath.length());
-
-	string pattern = "\\";
-	vector<string> cdPath = split(tmpCdPath, pattern);
-	int pathLen = cdPath.size();
-	bool flag = true;
-	int newCurIndex = curIndex;
-	for (int i = 0; i < pathLen && flag; i++)
-	{
-		if (i == pathLen - 1 && cdPath[i].length() == 0)
-			break;
-
-		if (cdPath[i] == "..")
-		{
-			if (fileIndex.index[newCurIndex].fileName == "root")
-			{
-				flag = false;
-			}
-			else
-			{
-				newCurIndex = fileIndex.index[newCurIndex].parentId;
-			}
-			continue;
-		}
-
-		int found = -1;
-		int childCnt = fileIndex.index[newCurIndex].child.size();
-		for (int j = 0; j < childCnt && found == -1; j++)
-		{
-			int childId = fileIndex.index[newCurIndex].child[j];
-			if (stringAreEqual(fileIndex.index[childId].fileName, cdPath[i]))
-				found = j;
-		}
-
-		if (found == -1 && i == 0)	//如果前面两种方式都找不到 则到根目录找
-		{
-			newCurIndex = 0;
-
-			int childCnt = fileIndex.index[newCurIndex].child.size();
-			for (int j = 0; j < childCnt && found == -1; j++)
-			{
-				int childId = fileIndex.index[newCurIndex].child[j];
-				if (stringAreEqual(fileIndex.index[childId].fileName, cdPath[i]))
-					found = j;
-			}
-		}
-
-		if (found == -1)
-			flag = false;
-		else
-			newCurIndex = fileIndex.index[newCurIndex].child[found];
-	}
-	*/
 	int newCurIndex = getFileIndex(tmpCdPath);
-	if (newCurIndex != -1)
+	if (newCurIndex != -1 && fileIndex.index[newCurIndex].fileType == dir)
+	{
 		curIndex = newCurIndex;
+		return 1;
+	}
 	else
+	{
 		printf("系统找不到指定路径\n");
+		return 0;
+	}
+		
 	
 }
 
@@ -489,6 +449,7 @@ int FileSystem::op_mkdir()	//路径可选 模式可选
 	{
 		fileName = path;
 		createFile(acc, fileName, dir, 0);
+		return 1;
 	}
 }
 
@@ -534,8 +495,9 @@ int FileSystem::op_mkfile()	//路径可选 模式可选
 	else	//在当前路径下建文件夹
 	{
 		fileName = path;
-		createFile(acc, fileName, file, 0);
+		return createFile(acc, fileName, file, 0);	
 	}
+	return 0;
 }
 
 //TODO:不搜索已被删除的文件 即effect = 0;
@@ -605,6 +567,10 @@ int FileSystem::getFileIndex(string path)	//搜索失败返回-1
 		//判断搜索到的目录是否已经被删除过 即effect是否为0
 		if (fileIndex.index[newCurIndex].effect == 0)
 			flag = false;
+
+		//判断路径上的每一个非最终节点是否均为文件夹dir类型
+		if (fileIndex.index[newCurIndex].fileType != dir && i != pathLen-1)
+			flag = false;
 	}
 
 	if (flag)
@@ -667,6 +633,7 @@ int FileSystem::rm(int dirIndex)	//返回0表示目录不是空的
 		fileIndex.index[dirIndex].effect = 0;
 		return 1;
 	}
+	return 0;
 }
 
 int FileSystem::recursiveRm(int dirIndex)	
@@ -689,6 +656,7 @@ int FileSystem::recursiveRm(int dirIndex)
 	{
 		return rm(dirIndex);
 	}
+	return 0;
 }
 
 int FileSystem::op_rmdir()
@@ -777,9 +745,45 @@ int FileSystem::op_delfile()
 
 int FileSystem::save()
 {
-	FILE *fout = fopen("os.txt", "w");
+	//存储boost信息
+	//先存储操作系统基本信息
+	FILE *fout = fopen("disk\\c\\0.txt", "w");
+	updateBitmap(0, 0);
+	int bitmapSize = (TotalBlockCnt + 7) / 8;
+	for (int i = 0; i < bitmapSize; i++)
+		fprintf(fout, "%c", bitmap[i]);
 	fprintf(fout, "%d ", fileIndex.indexCnt);
-	for (int i = 0; i < fileIndex.indexCnt; i++)
+	for (int i = 0; i < DiskCnt+2; i++)
+	{
+		//存index头
+		fprintf(fout, "%d %s %d ", fileIndex.index[i].id,
+			fileIndex.index[i].fileName.c_str(), fileIndex.index[i].parentId);
+		fprintf(fout, "%d ", fileIndex.index[i].child.size());
+		for (int j = 0; j < fileIndex.index[i].child.size(); j++)
+			fprintf(fout, "%d ", fileIndex.index[i].child[j]);
+		fprintf(fout, "%d %d ", fileIndex.index[i].effect, fileIndex.index[i].fileType);
+
+		//存fcb
+		fprintf(fout, "%d %s ", fileIndex.index[i].fcb->flevel, fileIndex.index[i].fcb->fname.c_str());
+		fprintf(fout, "%d ", fileIndex.index[i].fcb->blockId.size());
+		for (int j = 0; j < fileIndex.index[i].fcb->blockId.size(); j++)
+			fprintf(fout, "%d ", fileIndex.index[i].fcb->blockId[j]);
+		fprintf(fout, "%d %d %d %d ", fileIndex.index[i].fcb->flen, fileIndex.index[i].fcb->ftype,
+			fileIndex.index[i].fcb->facc, fileIndex.index[i].fcb->feffect);
+		fprintf(fout, "%-20s %-20s ", fileIndex.index[i].fcb->createtime, fileIndex.index[i].fcb->lastmodtime);
+		fprintf(fout, "%d ", fileIndex.index[i].fcb->fstate);
+	}
+	fclose(fout);
+
+	
+	//再把其他信息存储到初始化配置文件
+	string path = "c:\\catalog.ini";
+	int tmpFileId = openFile(path);
+	char filenameBuf[MaxCharLen];
+	sprintf(filenameBuf, "tmp%d.txt", tmpFileId);
+	fout = fopen(filenameBuf, "w");
+	
+	for (int i = DiskCnt + 2; i < fileIndex.indexCnt; i++)
 	{
 		//存index头
 		fprintf(fout, "%d %s %d ", fileIndex.index[i].id, 
@@ -800,23 +804,31 @@ int FileSystem::save()
 		fprintf(fout, "%d ", fileIndex.index[i].fcb->fstate);
 	}
 
-	int bitmapSize = (TotalBlockCnt + 7) / 8;
-	for (int i = 0; i < bitmapSize; i++)
-		fprintf(fout, "%c", bitmap[i]);
+	fclose(fout);
+	path = "c:\\catalog.ini";
+	writeFile(path);
+	closeFile(path);
 
 	return 1;
 }
 
-int FileSystem::load()
+int FileSystem::boost()
 {
-	FILE *fin = fopen("os.txt", "r");
+	FILE *fin = fopen("disk\\c\\0.txt", "r");
 	if (fin == NULL)
 		return 0;
 
+	//先读取操作系统基本信息
+	int bitmapSize = (TotalBlockCnt + 7) / 8;
+	for (int i = 0; i < bitmapSize; i++)
+		if (fscanf(fin, "%c", &bitmap[i]) == 0)
+			return 0;
+
+	//读取操作系统索引结构
 	char inputBuf[MaxCharLen];
-	int tmpSize, intBuf, intBuf2;
+	int tmpSize, intBuf;
 	fscanf(fin, "%d", &fileIndex.indexCnt);
-	for (int i = 0; i < fileIndex.indexCnt; i++)
+	for (int i = 0; i < DiskCnt+2; i++)
 	{
 		fscanf(fin, "%d%s%d", &fileIndex.index[i].id,
 			inputBuf, &fileIndex.index[i].parentId);
@@ -851,10 +863,236 @@ int FileSystem::load()
 		fscanf(fin, "%d", &fileIndex.index[i].fcb->fstate);
 	}
 
-	fscanf(fin, "%c", &inputBuf[0]);
-	int bitmapSize = (TotalBlockCnt + 7) / 8;
-	for (int i = 0; i < bitmapSize; i++)
-		fscanf(fin, "%c", &bitmap[i]);
+	//解决目录文件的自举难题
+	int blockCnt;
+	fscanf(fin, "%d%d", &fileIndex.index[DiskCnt + 1].fcb->flen, &blockCnt);
+	for (int i = 0; i < blockCnt; i++)
+	{
+		int tmp;
+		fscanf(fin, "%d", &tmp);
+		fileIndex.index[DiskCnt + 1].fcb->blockId.push_back(tmp);
+	}
 
+
+	fclose(fin);
+	return 1;
+}
+
+int FileSystem::load()
+{
+	//先加载磁盘引导块；
+	if (boost() == false)
+		return 0;
+
+	string path = "c:\\catalog.ini";
+	int tmpFileId = openFile(path);
+	char filenameBuf[MaxCharLen];
+	sprintf(filenameBuf, "tmp%d.txt", tmpFileId);
+	FILE *fin = fopen(filenameBuf, "r");
+
+	if (fin == NULL)
+		return 0;
+
+	char inputBuf[MaxCharLen];
+	int tmpSize, intBuf;
+	
+	for (int i = DiskCnt+2; i < fileIndex.indexCnt; i++)
+	{
+		fscanf(fin, "%d%s%d", &fileIndex.index[i].id,
+			inputBuf, &fileIndex.index[i].parentId);
+		fileIndex.index[i].fileName = inputBuf;
+		fscanf(fin, "%d", &tmpSize);
+		for (int j = 0; j < tmpSize; j++)
+		{
+			fscanf(fin, "%d", &intBuf);
+			fileIndex.index[i].child.push_back(intBuf);
+		}
+		fscanf(fin, "%d%d", &fileIndex.index[i].effect, &fileIndex.index[i].fileType);
+
+		fileIndex.index[i].fcb = new FCB;
+		fscanf(fin, "%d%s", &fileIndex.index[i].fcb->flevel, inputBuf);
+		fileIndex.index[i].fcb->fname = inputBuf;
+		fscanf(fin, "%d", &tmpSize);
+		for (int j = 0; j < tmpSize; j++)
+		{
+			fscanf(fin, "%d", &intBuf);
+			fileIndex.index[i].fcb->blockId.push_back(intBuf);
+		}
+		fscanf(fin, "%d%d%d%d", &fileIndex.index[i].fcb->flen, &fileIndex.index[i].fcb->ftype,
+			&fileIndex.index[i].fcb->facc, &fileIndex.index[i].fcb->feffect);
+		fscanf(fin, "%c", &inputBuf[0]);
+		for (int j = 0; j < 20; j++)
+			fscanf(fin, "%c", &fileIndex.index[i].fcb->createtime[j]);
+		fileIndex.index[i].fcb->createtime[19] = '\0';
+		fscanf(fin, "%c", &inputBuf[0]);
+		for (int j = 0; j < 20; j++)
+			fscanf(fin, "%c", &fileIndex.index[i].fcb->lastmodtime[j]);
+		fileIndex.index[i].fcb->lastmodtime[19] = '\0';
+		fscanf(fin, "%d", &fileIndex.index[i].fcb->fstate);
+	}	
+
+	fclose(fin);
+	path = "c:\\catalog.ini";
+	closeFile(path);
+
+	return 1;
+}
+
+int FileSystem::openFile(string path)	//打开失败返回-1
+										//打开成功时返回临时文件编号
+{
+	//获得“目标文件”的目录序号
+	int dirIndex = getFileIndex(path);
+	if (dirIndex == -1)
+	{
+		printf("路径不存在\n");
+		return -1;
+	}
+	if (fileIndex.index[dirIndex].fileType != file)
+	{
+		printf("目标不是一个文件\n");
+		return -1;
+	}
+
+	char filenameBuf[MaxCharLen];
+	int tmpFileId = tmpFileCnt++;
+	fileIndex.index[dirIndex].tmpFileId = tmpFileId;
+	fileIndex.index[dirIndex].fcb->fstate = opened;
+	sprintf(filenameBuf, "tmp%d.txt", tmpFileId);
+	FILE* fout = fopen(filenameBuf, "w");
+	int blockCnt = fileIndex.index[dirIndex].fcb->blockId.size();
+	char *c_dir = "disk\\c";
+	for (int i = 0; i < blockCnt; i++)
+	{
+		sprintf(filenameBuf, "%s\\%d.txt", c_dir, fileIndex.index[dirIndex].fcb->blockId[i]);
+		FILE *fin = fopen(filenameBuf, "r");
+		char tmpChar;
+		while (fscanf(fin, "%c", &tmpChar) == 1)
+		{
+			fprintf(fout, "%c", tmpChar);
+		}
+			
+		fclose(fin);
+	}
+	fclose(fout);
+	return tmpFileId;
+}
+
+int FileSystem::writeFile(string path)
+{
+	//获得“目标文件”的目录序号
+	int dirIndex = getFileIndex(path);
+	if (dirIndex == -1)
+	{
+		printf("目标路径不存在\n");
+		return -1;
+	}
+	if (fileIndex.index[dirIndex].fileType != file)
+	{
+		printf("目标不是一个文件\n");
+		return -1;
+	}
+
+	//打开存储“待写入内容”的文件
+	int tmpFileId = fileIndex.index[dirIndex].tmpFileId;
+	char filenameBuf[MaxCharLen];
+	sprintf(filenameBuf, "tmp%d.txt", tmpFileId);
+	FILE *fin = fopen(filenameBuf, "r");
+	if (fin == NULL)
+	{
+		printf("无效的写入内容\n");
+		return -1;
+	}
+
+	//统计“待写入内容”的大小
+	int contentLen = 0;
+	char tmpChar;
+	while (fscanf(fin, "%c", &tmpChar) == 1)
+		contentLen++;
+	fclose(fin);
+	fin = fopen(filenameBuf, "r");
+
+	//清空原文件所占用的block
+	int blockCnt = fileIndex.index[dirIndex].fcb->blockId.size();
+	for (int i = 0; i < blockCnt; i++)
+	{
+		updateBitmap(1, fileIndex.index[dirIndex].fcb->blockId[i]);
+	}
+	fileIndex.index[dirIndex].fcb->blockId.clear();
+
+	//修改“目标文件”状态
+	fileIndex.index[dirIndex].fcb->fstate = writing;
+	fileIndex.index[dirIndex].fcb->flen = contentLen;
+	getCurTime(fileIndex.index[dirIndex].fcb->lastmodtime);
+
+	//存内容
+	blockCnt = (contentLen + BlockSize - 1) / BlockSize;
+	int blockLoc = 0;
+	FILE *fout = NULL;
+	for (int i = 0; i < contentLen; i++)
+	{
+		char *c_dir = "disk\\c";
+		if (i % BlockSize == 0)
+		{	
+			//TODO:如果分配失败
+			fileIndex.index[dirIndex].fcb->blockId.push_back(findBlankBlockId());
+			sprintf(filenameBuf, "%s\\%d.txt", c_dir, fileIndex.index[dirIndex].fcb->blockId[blockLoc]);
+			blockLoc++;
+			fout = fopen(filenameBuf, "w");
+		}
+		if (fout != NULL)
+		{
+			fscanf(fin, "%c", &tmpChar);
+			fprintf(fout, "%c", tmpChar);
+		}
+		if ((i + 1) % BlockSize == 0 || (i + 1) == contentLen)
+			fclose(fout);
+	}
+	fclose(fin);
+
+	//解决目录文件的自举难题
+	if (dirIndex == 3)
+	{
+		FILE *fout2 = fopen("disk\\c\\0.txt", "a");
+		int blockCnt = fileIndex.index[dirIndex].fcb->blockId.size();
+		fprintf(fout2, "%d %d ", contentLen, blockCnt);
+		for (int i = 0; i < blockCnt; i++)
+			fprintf(fout2, "%d ", fileIndex.index[dirIndex].fcb->blockId[i]);
+		fclose(fout2);
+	}
+
+
+	//还原“目标文件”状态
+	fileIndex.index[dirIndex].fcb->fstate = opened;
+	return 1;
+}
+
+int FileSystem::closeFile(string path)
+{
+	//获得“目标文件”的目录序号
+	int dirIndex = getFileIndex(path);
+	if (dirIndex == -1)
+	{
+		printf("目标路径不存在\n");
+		return -1;
+	}
+	if (fileIndex.index[dirIndex].fileType != file)
+	{
+		printf("目标不是一个文件\n");
+		return -1;
+	}
+
+	if (fileIndex.index[dirIndex].fcb->fstate == closed)
+	{
+		printf("目标文件未打开\n");
+		return -1;
+	}
+
+	int tmpFileId = fileIndex.index[dirIndex].tmpFileId;
+	char filenameBuf[MaxCharLen];
+	sprintf(filenameBuf, "tmp%d.txt", tmpFileId);
+	remove(filenameBuf);	//移除临时文件
+	fileIndex.index[dirIndex].tmpFileId = -1;
+	fileIndex.index[dirIndex].fcb->fstate = closed;
 	return 1;
 }

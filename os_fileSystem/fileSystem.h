@@ -70,6 +70,7 @@ typedef struct
 	//int filelevel;   //文件所在层级
 	int effect;  //文件有效性
 	int fileType;   //文件属性
+	int tmpFileId;
 	FCB* fcb;   //指向自身的FCB
 } FileIndexElement;
 
@@ -89,7 +90,7 @@ private:
 	int curIndex;	//当前目录
 	int curLevel;
 	unsigned char bitmap[(TotalBlockCnt + 7) / 8]; //1表示空闲 0表示被占用
-	
+	int tmpFileCnt;
 private:
 	int updateBitmap(int mode, int blockId);
 	int findBlankBlockId();
@@ -100,6 +101,13 @@ private:
 	int getFileIndex(string path);
 	int load();
 	bool fileNameIsLegal(string fileName);
+	int openFile(string path);
+	int writeFile(string path);
+	int closeFile(string path);
+	//TODO：在实验报告中解释为什么需要boost 
+	//		要点：boost块长度固定、系统需要先加载基本信息、基本信息存储于文件中、所以需要先由引导块建立基本信息存储文件的FCB
+	int boost();
+	
 
 public:
 	FileSystem();
@@ -113,6 +121,9 @@ public:
 	int op_mkfile();
 	int op_rmdir();
 	int op_delfile();
+	/*int op_open();
+	int op_close();
+	int op_write();*/
 	int save();
 	
 };
